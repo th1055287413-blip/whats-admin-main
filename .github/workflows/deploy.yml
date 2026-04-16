@@ -47,14 +47,23 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
+          
+          # 1. 写入私钥
           echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo "Host deploy" >> ~/.ssh/config
-          echo "  HostName ${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/config
-          echo "  User root" >> ~/.ssh/config
-          echo "  IdentityFile ~/.ssh/deploy_key" >> ~/.ssh/config
-          echo "  Port ${{ secrets.DEPLOY_PORT }}" >> ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          
+          # 2. 写入 SSH Config (使用 Here Document 语法，避免转义问题)
+          cat > ~/.ssh/config << EOF
+          Host deploy
+            HostName ${{ secrets.DEPLOY_HOST }}
+            User root
+            Port ${{ secrets.DEPLOY_PORT }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          EOF
+
+          # 3. 验证配置是否生成正确 (调试用，可选)
+          cat ~/.ssh/config
 
       - name: Deploy to server
         run: |

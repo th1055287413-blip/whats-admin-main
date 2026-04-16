@@ -1,0 +1,69 @@
+name: Deploy
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [pequod]
+    environment: ${{ matrix.environment }}
+    concurrency:
+      group: deploy-${{ matrix.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create .env.production
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_AGENT_BASE_URL: ${{ vars.VITE_AGENT_BASE_URL }}
+        run: |
+          cat > .env.production << EOF
+          VITE_API_BASE_URL=${VITE_API_BASE_URL}
+          VITE_AGENT_BASE_URL=${VITE_AGENT_BASE_URL}
+          VITE_NODE_ENV=production
+          EOF
+
+      - name: Build
+        run: npx vite build
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Host deploy" >> ~/.ssh/config
+          echo "  HostName ${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/config
+          echo "  User root" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/deploy_key" >> ~/.ssh/config
+          echo "  Port ${{ secrets.DEPLOY_PORT }}" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+
+      - name: Deploy to server
+        run: |
+          tar -czf dist.tar.gz dist
+          scp dist.tar.gz deploy:/tmp/dist.tar.gz
+
+          DEPLOY_PATH="$(printf '%s' "${{ vars.DEPLOY_PATH }}" | tr -d '\n\r')"
+          if [ -z "${DEPLOY_PATH}" ] || [ "${DEPLOY_PATH}" = "/" ]; then
+            echo "::error::DEPLOY_PATH is empty or root, aborting"
+            exit 1
+          fi
+          ssh deploy "set -e; mkdir -p /tmp/dist; tar -xzf /tmp/dist.tar.gz -C /tmp/dist; rm -rf ${DEPLOY_PATH}/*; cp -r /tmp/dist/dist/* ${DEPLOY_PATH}/; rm -rf /tmp/dist /tmp/dist.tar.gz; echo 'Deploy completed'"
